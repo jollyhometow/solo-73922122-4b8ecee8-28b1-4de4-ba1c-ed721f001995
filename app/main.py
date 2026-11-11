@@ -9,12 +9,16 @@ Interactive API documentation: http://localhost:8000/docs
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
 from typing import Annotated, List, Literal, Optional
 
 from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import RedirectResponse
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
+from .collector.config import CollectorSettings
+from .collector.routes import router as collection_router
+from .collector.service import CollectionManager
 from .solver import CellRange, NoSolutionError, SolveResult, solve
 
 # ---------------------------------------------------------------------------
@@ -218,26 +222,45 @@ NO_SOLUTION_EXAMPLE = {
     }
 }
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 采集器：HTTP 源地址与演示登录信息由环境变量固定；启动时把此前
+    # “运行中”的任务标记为被进程中断（游标未推进），等待重新触发续采。
+    settings = CollectorSettings.from_env()
+    app.state.collector_settings = settings
+    app.state.collection_manager = CollectionManager(settings)
+    yield
+
+
 app = FastAPI(
-    title="公交站间客流补充隐藏 API",
-    summary="保留行列合计的小客流单元补充隐藏服务",
+    title="公交数据服务 API",
+    summary="站间客流补充隐藏 + 维修门户完工记录按月采集",
     description=(
         "接收带站名的 2～3 行、2～4 列客流矩阵和阈值 k。先隐藏值为 1～k−1 "
         "的单元，再以最少格数补充隐藏其他单元，使每个先隐藏单元在所有符合"
         "公开值和行列合计的非负整数矩阵中至少有两个可行值。发布矩阵以 null "
         "表示隐藏格；返回结果同时列出每个先隐藏单元的最小/最大可行值，供内部核对。\n\n"
-        "**示例说明：** " + EXAMPLE_EXPLANATION
+        "**示例说明：** " + EXAMPLE_EXPLANATION + "\n\n"
+        "**完工记录采集：** `/api/collection` 提供维修门户已封存月份完工记录的"
+        "按月采集、断点续采、进度与已采记录查询。门户采用 Cookie 会话与 CSRF "
+        "登录表单；会话失效时自动重登一次并重取原请求，整页详情全部校验通过后"
+        "才把记录与下一页地址一起提交 SQLite，断流、坏详情或进程中断都不会"
+        "推进当前页，重新触发即可续采，已提交工单不重复。"
     ),
-    version="1.0.0",
+    version="1.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
+    lifespan=lifespan,
     openapi_tags=[
         {"name": "suppression", "description": "补充隐藏求解"},
+        {"name": "collection", "description": "维修门户完工记录按月采集"},
         {"name": "examples", "description": "可调用示例"},
         {"name": "system", "description": "服务状态"},
     ],
 )
+
+app.include_router(collection_router)
 
 
 @app.get("/", include_in_schema=False)

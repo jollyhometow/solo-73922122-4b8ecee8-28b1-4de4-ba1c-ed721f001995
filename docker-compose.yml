@@ -1,13 +1,52 @@
 services:
+  portal:
+    build:
+      context: .
+      dockerfile: portal/Dockerfile
+    container_name: maintenance-portal-demo
+    ports:
+      - "${PORTAL_PORT:-8080}:8080"
+    environment:
+      TZ: "${TZ:-Asia/Shanghai}"
+      # 演示登录信息（与采集端配置保持一致）
+      PORTAL_USERNAME: "${PORTAL_USERNAME:-demo}"
+      PORTAL_PASSWORD: "${PORTAL_PASSWORD:-demo123}"
+      # 每个会话可服务的列表页数：1 表示翻页前会话即过期，用于演示重登
+      PORTAL_SESSION_PAGE_BUDGET: "${PORTAL_SESSION_PAGE_BUDGET:-1}"
+      # 首次请求会断流的详情工单（2025-10 第二页的第二份详情）
+      PORTAL_FAIL_ONCE_ORDERS: "${PORTAL_FAIL_ONCE_ORDERS:-WO-202510-005}"
+      PORTAL_LATENCY_MS: "${PORTAL_LATENCY_MS:-200}"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2).read()"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
   api:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: bus-od-suppression-api
+    container_name: bus-data-api
+    depends_on:
+      portal:
+        condition: service_healthy
     ports:
       - "${HOST_PORT:-8000}:8000"
     environment:
       TZ: "${TZ:-Asia/Shanghai}"
+      # 采集源地址与演示登录信息（由配置固定）
+      PORTAL_BASE_URL: "http://portal:8080"
+      PORTAL_USERNAME: "${PORTAL_USERNAME:-demo}"
+      PORTAL_PASSWORD: "${PORTAL_PASSWORD:-demo123}"
+      COLLECTOR_DB_PATH: "/data/collector.db"
+    volumes:
+      - collector-data:/data
     restart: unless-stopped
     healthcheck:
       test:
@@ -19,3 +58,6 @@ services:
       timeout: 3s
       retries: 5
       start_period: 5s
+
+volumes:
+  collector-data:

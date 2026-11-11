@@ -7,3 +7,9 @@ venv/
 .coverage
 htmlcov/
 *.log
+
+# 采集器本地数据库
+collector.db*
+*.db
+*.db-wal
+*.db-shm
